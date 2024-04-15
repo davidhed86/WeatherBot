@@ -1,0 +1,104 @@
+import urllib3
+import json
+import logging
+
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
+http = urllib3.PoolManager()
+
+def lambda_handler(event, context):
+
+    slots = event['interpretations'][0]['intent']['slots']
+
+
+
+    city = slots['City']['value']['interpretedValue']
+
+    lon, lat = get_coordinates(city)
+
+    if lon is None or lat is None:
+        return {
+            'sessionState': {
+                'intent': {
+                    'state': 'Fulfilled',
+                    'name': 'GetWeather_David',
+                },
+                'messages': ['Failed to retrieve coordinates for the city.'],
+                'sessionAttributes': 'Fulfilled',
+                'dialogAction': {
+                    'type': 'Close',
+                    'intent': 'GetWeather_David'
+                }
+            }
+        }
+
+    url = f"https://opendata-download-metfcst.smhi.se/api/category/pmp3g/version/2/geotype/point/lon/{round(lon, 4)}/lat/{round(lat, 4)}/data.json"
+
+    response = http.request('GET', url)
+
+    if response.status == 200:
+        forecast_data = json.loads(response.data.decode('utf-8'))
+        logger.debug(forecast_data)
+        filtered_forecast_data =[]
+        for day in forecast_data['timeSeries']:
+            for parameter in day['parameters']:
+                if parameter['name'] == 't':
+                    filtered_forecast_data.append(
+                        {
+                            'time': day['validTime'],
+                            'temperature': parameter['values'][0]
+                        }
+                        )
+        logger.debug(filtered_forecast_data)
+        print(filtered_forecast_data)
+        return {
+                    'messages': [{
+                        "contentType": "CustomPayload",
+                        "content": json.dumps(filtered_forecast_data),
+                        }
+                    ],
+                    'sessionState': {
+                        'intent': {
+                            'state': 'Fulfilled',
+                            'name': 'GetWeather_David',
+                            'slots': slots
+                        },
+                        'sessionAttributes': {},
+                        'dialogAction': {
+                            'type': 'Close',
+                        }
+                    }
+                }
+    else:
+        return {
+            'sessionState': {
+                'intent': {
+                    'state': 'Fulfilled',
+                    'name': 'GetWeather_David',
+                },
+                'messages': ['Failed to retrieve weather forecast data.'],
+                'sessionAttributes': {},
+                'dialogAction': {
+                    'type': 'Close',
+                    'intent': 'GetWeather_David'
+                }
+            }
+        }
+
+def get_coordinates(city):
+
+    api_key = 'fc5a7aca2ab8416fbfbb27000474d10f'
+
+    geocoding_url = f"https://api.opencagedata.com/geocode/v1/json?q={city}&key={api_key}"
+    response = http.request('GET', geocoding_url)
+
+    logger.debug('response={}'.format(response))
+
+    if response.status == 200:
+        data = json.loads(response.data.decode('utf-8'))
+
+        if data['results']:
+            lon = data['results'][0]['geometry']['lng']
+            lat = data['results'][0]['geometry']['lat']
+            return lon, lat
+    return None, None
